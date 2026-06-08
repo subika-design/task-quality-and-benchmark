@@ -1,0 +1,11 @@
+agent:
+  model:
+    name: claude-opus-4-7
+    top_p: null
+    completion_kwargs:
+      drop_params: true
+      additional_drop_params:
+        - temperature
+        - top_p
+  tools:
+    execution_timeout: 300
