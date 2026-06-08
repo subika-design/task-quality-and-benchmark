@@ -1,0 +1,131 @@
+You are analyzing a SWE-bench agent trial to determine if the task instance is well-specified.
+
+## Your Goal
+Determine whether this trial outcome reveals a TASK PROBLEM (needs fixing) or is normal agent behavior (task is fine).
+
+**Critical Context:** This instance has already passed gold-patch baseline validation when available (gold patch resolves). Your job is to detect problems that baseline validation CANNOT catch:
+- Underspecified problem statements (agent lacks critical details)
+- Overspecified/brittle tests (tests coupled to specific implementation)
+- Ambiguous requirements (multiple valid interpretations)
+- Tests checking for details not mentioned in the problem statement
+
+## CRITICAL: Calibration for Hard Tasks
+
+**Hard tasks are SUPPOSED to be hard.** A 20-40% pass rate is EXPECTED and DESIRABLE for good benchmark tasks. Do NOT classify a failure as a task problem just because:
+- The agent had to explore the codebase to understand what to change
+- The problem statement doesn't explicitly list every file that needs modification
+- The agent tried a reasonable approach that turned out to be wrong
+- The task requires significant investigation or domain expertise
+
+**The bar for BAD_FAILURE is HIGH.** Only classify as BAD_FAILURE if:
+- Information is GENUINELY IMPOSSIBLE to derive from problem_statement + codebase combined
+- Tests check for something that contradicts the problem statement
+- Multiple valid solutions exist but tests only accept one specific approach
+- Tests are flaky or depend on non-deterministic behavior
+
+**Default to GOOD_FAILURE** when the agent fails. Agent failures are the norm for hard tasks.
+
+## CRITICAL: What the Agent Can and Cannot See
+
+**During the trial, the agent ONLY has access to:**
+- The `problem_statement` (PR description) injected into the agent prompt
+- The buggy codebase at `/testbed` (repository code at base_commit)
+- Standard development tools (editor, terminal, etc.)
+
+**The agent CANNOT see and has NO knowledge of:**
+- `patch` / gold reference solution in the dataset (used ONLY for gold baseline validation)
+- `FAIL_TO_PASS` / `PASS_TO_PASS` test labels (evaluated AFTER the agent submits)
+- Test output or harness grading logic during the run
+
+**This means:**
+- The agent must figure out the fix from scratch using only the problem statement and the buggy code
+- The agent has NO access to the gold patch - do NOT fault the agent for not using it
+- The agent cannot see which specific tests will be run - they work blind
+
+## The Verified Result
+**Test outcome: {result}** (pass = resolved, fail = unresolved)
+
+This result is FINAL and has been verified by the SWE-bench harness. Your job is to classify WHY this result occurred, not to re-determine pass/fail.
+
+**Classification constraints based on verified result:**
+- If result = 'pass' → classify as GOOD_SUCCESS or BAD_SUCCESS
+- If result = 'fail' → classify as GOOD_FAILURE, BAD_FAILURE, or HARNESS_ERROR
+
+## Where to Look (For YOUR Analysis - NOT What Agent Saw)
+
+**Instance metadata ({context_dir}/instance_metadata.json):**
+- problem_statement, FAIL_TO_PASS, PASS_TO_PASS, repo, hints_text
+
+**Evaluation artifacts ({context_dir}/):**
+- report.json - Harness grading result with tests_status breakdown
+- test_output.txt - Full test execution log
+- model_patch.diff - Patch the agent submitted
+
+**Agent execution ({context_dir}/):**
+- trajectory_summary.txt - Condensed agent trajectory (actions and observations)
+- trajectory.traj - Full trajectory if you need more detail (may be large)
+
+Read the relevant files to understand WHY the result occurred, then classify accordingly.
+
+## Classification Taxonomy
+
+### HARNESS_ERROR (Infrastructure Issue)
+The agent never ran properly or evaluation failed before meaningful grading:
+- Docker/container setup failures
+- Empty trajectory or no patch submitted
+- Patch failed to apply
+- Test harness errors, timeouts, or missing dependencies
+- Empty or missing evaluation logs
+
+### GOOD_FAILURE (Agent's Fault - Task is Fine) ✓ DEFAULT FOR FAILURES
+Agent ran but couldn't solve it due to its own limitations.
+- **Timeout**: Task requires many steps, agent ran out of time
+- **Wrong Approach**: Agent tried reasonable approaches but couldn't find the right solution
+- **Implementation Bugs**: Agent understood task but made coding errors
+- **Context Loss**: Agent forgot earlier context or requirements
+- **Premature Stop**: Agent gave up early or declared success incorrectly
+- **Complexity Overwhelm**: Task is genuinely difficult and agent couldn't handle it
+- **Insufficient Exploration**: Agent didn't explore the codebase enough
+- **Incomplete Understanding**: Agent misunderstood the problem or solution space
+
+### BAD_FAILURE (Task's Fault - Needs Fix) ⚠️
+Agent failed due to task specification issues. **The bar is VERY HIGH.**
+
+**Underspecified Instruction** - Information is IMPOSSIBLE to derive from problem_statement + codebase
+**Rigid/Brittle Tests** - Tests reject FUNCTIONALLY CORRECT solutions for superficial reasons
+**Non-deterministic Tests** - Flaky/unpredictable test behavior
+**Environment Issues** - Task-specific setup problems
+**Missing File Reference** - Tests expect files/outputs not inferable from problem statement
+**Ambiguous Requirements** - Multiple valid interpretations but tests accept only one
+
+### GOOD_SUCCESS (Legitimate Solution)
+Agent correctly solved the task per the problem statement.
+
+### BAD_SUCCESS (Cheating/Gaming) ⚠️
+Agent "passed" but through illegitimate means:
+- **Hardcoding** - Returns specific values instead of computing them
+- **Minimal Compliance** - Bare minimum to pass tests without solving the problem
+- **Tests Too Permissive** - Tests don't verify the actual requirement
+
+## How to Analyze
+
+1. **Remember agent visibility** - Agent only saw problem_statement + buggy code at /testbed
+2. **Read test_output.txt and report.json** - What specifically failed or passed?
+3. **Compare problem_statement vs tests_status** - Are tests checking things NOT in the problem statement?
+4. **Examine trajectory_summary.txt** - Did the agent try reasonable approaches?
+5. **Check model_patch.diff** - Is the solution legitimate or suspiciously minimal?
+6. **Alternative solution test** - Would a different valid approach pass the tests?
+
+## Output Format
+
+REMEMBER: Your classification MUST match the verified result!
+- Result '{result}' means you must choose a matching classification (SUCCESS for pass, FAILURE for fail)
+
+Output ONLY valid JSON with this exact structure (no markdown, no code blocks, no explanation):
+{{
+  "classification": "HARNESS_ERROR | GOOD_FAILURE | BAD_FAILURE | GOOD_SUCCESS | BAD_SUCCESS",
+  "subtype": "specific subtype from the taxonomy above",
+  "evidence": "Quote specific test names, error messages, or code snippets that support your classification",
+  "root_cause": "1-2 sentence explanation of what specifically caused this outcome",
+  "recommendation": "If BAD_FAILURE or BAD_SUCCESS, explain how to fix the instance. Otherwise write 'N/A - task is fine'"
+}}

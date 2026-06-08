@@ -3,7 +3,7 @@
 #
 # Usage:
 #   bash setup.sh                          # one-time bootstrap
-#   # edit pipeline.env (DATASET) and SWE-agent/.env (API keys)
+#   # edit pipeline.env (DATASET, API keys, run settings)
 #   bash run_pipeline.sh prepare
 #   bash run_pipeline.sh gold
 #   bash run_pipeline.sh agent
@@ -16,8 +16,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="${PIPELINE_ENV:-$SCRIPT_DIR/pipeline.env}"
 
 if [[ -f "$ENV_FILE" ]]; then
+  set -a
   # shellcheck source=/dev/null
   source "$ENV_FILE"
+  set +a
 else
   echo "Config not found: $ENV_FILE" >&2
   echo "Run: bash setup.sh" >&2
@@ -48,6 +50,12 @@ if [[ "$VENV" != /* ]]; then
   VENV="$ROOT/$VENV"
 fi
 TRIALS="${TRIALS:-1 2 3 4 5}"
+CLASSIFY_AFTER_EVAL="${CLASSIFY_AFTER_EVAL:-true}"
+ANALYSIS_MODEL="${ANALYSIS_MODEL:-claude-sonnet-4-5}"
+VERDICT_MODEL="${VERDICT_MODEL:-gpt-5.2}"
+CLASSIFICATION_TIMEOUT="${CLASSIFICATION_TIMEOUT:-300}"
+VERDICT_TIMEOUT="${VERDICT_TIMEOUT:-180}"
+CLASSIFY_OUTPUT_DIR="${CLASSIFY_OUTPUT_DIR:-$ROOT/.task_analyze/results}"
 
 # Read TRIALS into array (space-separated in env)
 read -r -a TRIAL_ARRAY <<< "$TRIALS"
@@ -104,14 +112,15 @@ check_dataset() {
 }
 
 check_api_keys() {
-  local env_file="$AGENT/.env"
-  if [[ ! -f "$env_file" ]]; then
-    fail "Missing $env_file. Run: bash setup.sh, then add API keys."
+  if [[ -z "${ANTHROPIC_API_KEY:-}" && -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+    fail "Set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN in $ENV_FILE"
   fi
-  local anthropic_key
-  anthropic_key="$(grep -E '^ANTHROPIC_API_KEY=' "$env_file" 2>/dev/null | cut -d= -f2- | tr -d '"' || true)"
-  if [[ -z "$anthropic_key" ]]; then
-    fail "ANTHROPIC_API_KEY not set in $env_file"
+}
+
+check_classify_keys() {
+  check_api_keys
+  if [[ -z "${OPENAI_API_KEY:-}" ]]; then
+    fail "OPENAI_API_KEY not set (required for verdict synthesis). Add to $ENV_FILE"
   fi
 }
 
@@ -136,12 +145,21 @@ preflight() {
       check_dataset
       check_api_keys
       ;;
+    classify)
+      check_import task_analyze
+      check_dataset
+      check_classify_keys
+      ;;
     all)
       check_import swebench
       check_import sweagent
-      check_docker
       check_dataset
+      check_docker
       check_api_keys
+      if [[ "${CLASSIFY_AFTER_EVAL,,}" == "true" ]]; then
+        check_import task_analyze
+        check_classify_keys
+      fi
       ;;
     *)
       return 0
@@ -291,6 +309,22 @@ step_pred_eval() {
   done
 }
 
+step_classify() {
+  log "Step 5: trial classification and instance verdicts"
+  cd "$ROOT"
+  task-classify \
+    --dataset "$DATASET" \
+    --run-prefix "$RUN_PREFIX" \
+    --trials "$TRIALS" \
+    --trajectories-root "$AGENT/trajectories" \
+    --bench-root "$BENCH" \
+    --output-dir "$CLASSIFY_OUTPUT_DIR" \
+    --analysis-model "$ANALYSIS_MODEL" \
+    --verdict-model "$VERDICT_MODEL" \
+    --classification-timeout "$CLASSIFICATION_TIMEOUT" \
+    --verdict-timeout "$VERDICT_TIMEOUT"
+}
+
 usage() {
   cat <<EOF
 Usage: $(basename "$0") <command>
@@ -301,7 +335,8 @@ Commands:
   convert   Convert task JSONL to SWE-agent format only
   agent     Convert + run agent trials
   eval      Evaluate preds.json for each trial
-  all       prepare → gold → agent → eval
+  classify  LLM trial classification + per-instance verdict (after eval)
+  all       prepare → gold → agent → eval → classify (if CLASSIFY_AFTER_EVAL=true)
 
 First-time setup: bash setup.sh
 Config: $ENV_FILE (override with PIPELINE_ENV=/path/to/env)
@@ -315,7 +350,7 @@ main() {
       usage
       exit 0
       ;;
-    prepare|gold|convert|agent|eval|all)
+    prepare|gold|convert|agent|eval|classify|all)
       preflight "$cmd"
       ;;
     *)
@@ -330,11 +365,17 @@ main() {
     convert) step_convert_tasks ;;
     agent) step_agent_trials ;;
     eval) step_pred_eval ;;
+    classify) step_classify ;;
     all)
       step_prepare_images
       step_gold_eval
       step_agent_trials
       step_pred_eval
+      if [[ "${CLASSIFY_AFTER_EVAL,,}" == "true" ]]; then
+        step_classify
+      else
+        log "Skipping classify (CLASSIFY_AFTER_EVAL=false)"
+      fi
       ;;
   esac
   log "Done: $cmd"

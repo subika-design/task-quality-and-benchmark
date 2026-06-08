@@ -1,0 +1,90 @@
+You are synthesizing multiple independent trial analyses into a final SWE-bench instance quality verdict.
+
+## Critical Calibration: Hard Tasks are GOOD
+
+**Hard tasks with low pass rates are DESIRABLE for benchmarks.** A 20-40% pass rate indicates a well-calibrated task. Do NOT penalize instances for being difficult.
+
+- 0% pass rate: Could be too hard OR could be a task problem (investigate)
+- 10-40% pass rate: IDEAL for benchmark tasks - challenging but solvable
+- 50-70% pass rate: Good but possibly too easy
+- 80-100% pass rate: Too easy for benchmarking (unless intended)
+
+**Failures are EXPECTED.** The default classification for failures should be GOOD_FAILURE (agent's fault) unless there's strong evidence the instance itself is broken.
+
+## Context
+
+You have {num_trials} trial runs of the same SWE-bench instance. Each trial was run independently with the same agent, and each trial was classified separately by analyzing its artifacts.
+
+**Instance ID:** {instance_id}
+
+**Gold Baseline Validation:**
+{baseline_summary}
+
+## Individual Trial Classifications
+
+{trial_classifications}
+
+## Your Goal
+
+Synthesize these independent analyses into a **final verdict** on the instance quality.
+
+Consider:
+1. **Pattern Recognition**: Are failures consistent (same root cause) or diverse (multiple issues)?
+2. **Signal vs Noise**: Do task problems appear across multiple trials (strong signal) or just one (possible noise)?
+3. **Root Cause**: What is the PRIMARY issue that best explains the overall pattern?
+4. **Confidence**: How confident are you based on consistency and baseline validation?
+5. **Actionability**: What are the most important fixes needed (if any)?
+6. **Solvability**: Did ANY trial succeed? If yes, the instance IS solvable - failures are agent variance.
+7. **Over-classification check**: Is "Underspecified Instruction" just meaning "task is hard"? That's not a problem.
+
+## Classification Categories
+
+**Task problems** (need fixing):
+- BAD_FAILURE: Task specification issues (underspecified problem statement, brittle tests, ambiguous requirements, etc.)
+- BAD_SUCCESS: Cheating/gaming (hardcoding, tests too permissive)
+
+**Normal outcomes** (instance is fine):
+- GOOD_SUCCESS: Agent solved it legitimately
+- GOOD_FAILURE: Agent couldn't solve it due to agent limitations
+- HARNESS_ERROR: Infrastructure issues (not task's fault)
+
+## Confidence Levels
+
+- **high**: All trials agree OR baseline validation critical failure OR clear consistent pattern
+- **medium**: Majority of trials agree (>50%) OR mixed signals but leaning one way
+- **low**: Trials disagree OR unclear pattern OR only harness errors
+
+## Decision Logic
+
+**Default assumption: Instance is GOOD.** Only mark as bad with strong evidence.
+
+1. **Critical baseline failures** → is_good=false, high confidence
+   - If gold patch did not resolve: "reference solution doesn't work"
+
+2. **Consistent STRONG task problems** → is_good=false
+   - Majority (>50%) show the SAME BAD_FAILURE subtype with clear evidence
+
+3. **Some successes, mixed failures** → is_good=true, medium-high confidence
+
+4. **All failures but mostly GOOD_FAILURE** → is_good=true, medium confidence
+
+5. **Any successes** → is_good=true, medium-high confidence
+
+## Output Format
+
+Return ONLY valid JSON (no markdown, no code blocks, no explanation):
+
+{{
+  "is_good": true/false,
+  "confidence": "high" | "medium" | "low",
+  "primary_issue": "clear description of main problem" or null,
+  "recommendations": ["specific fix 1", "specific fix 2", ...],
+  "reasoning": "1-2 sentence explanation of your verdict based on the trial pattern"
+}}
+
+## Important Notes
+
+- **Default to GOOD**: Instances that passed gold baseline are presumed good. Failures are expected.
+- **Consistency matters**: 1/4 trials showing issue is noise, 3/4 with SAME issue is a signal
+- **Baseline validation overrides**: Gold baseline failure always means is_good=false
+- **Low pass rates are GOOD**: 25% pass rate on a hard instance is ideal for benchmarking

@@ -60,6 +60,9 @@ pip install -q -e "$BENCH"
 log "Installing SWE-agent"
 pip install -q -e "$AGENT"
 
+log "Installing task-analyze (trial classification)"
+pip install -q -e "$ROOT/task_analyze"
+
 if [[ ! -f "$ROOT/pipeline.env" ]]; then
   cp "$ROOT/pipeline.env.example" "$ROOT/pipeline.env"
   log "Created pipeline.env from pipeline.env.example"
@@ -67,16 +70,64 @@ else
   log "Keeping existing pipeline.env"
 fi
 
-if [[ ! -f "$AGENT/.env" ]]; then
-  cp "$AGENT/.env.example" "$AGENT/.env"
-  log "Created SWE-agent/.env from .env.example — add your API keys there"
-else
-  log "Keeping existing SWE-agent/.env"
+# One-time migration: copy API keys from legacy SWE-agent/.env into pipeline.env
+LEGACY_ENV="$AGENT/.env"
+PIPELINE_ENV="$ROOT/pipeline.env"
+if [[ -f "$LEGACY_ENV" && -f "$PIPELINE_ENV" ]]; then
+  if "$PYTHON_CMD" - "$LEGACY_ENV" "$PIPELINE_ENV" <<'PY'
+import sys
+from pathlib import Path
+
+legacy_path = Path(sys.argv[1])
+pipeline_path = Path(sys.argv[2])
+keys = ("GITHUB_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
+
+
+def parse_env(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        values[key.strip()] = value.strip().strip('"').strip("'")
+    return values
+
+
+legacy = parse_env(legacy_path)
+lines = pipeline_path.read_text().splitlines()
+changed = False
+
+for key in keys:
+    legacy_val = legacy.get(key, "")
+    if not legacy_val:
+        continue
+    replaced = False
+    for idx, line in enumerate(lines):
+        if not line.startswith(f"{key}="):
+            continue
+        replaced = True
+        current = line.split("=", 1)[1].strip().strip('"').strip("'")
+        if not current:
+            lines[idx] = f'{key}="{legacy_val}"'
+            changed = True
+        break
+    if not replaced:
+        lines.append(f'{key}="{legacy_val}"')
+        changed = True
+
+if changed:
+    pipeline_path.write_text("\n".join(lines) + "\n")
+    print("migrated")
+PY
+  then
+    log "Migrated API keys from SWE-agent/.env into pipeline.env"
+    log "You can remove $LEGACY_ENV after verifying pipeline.env"
+  fi
 fi
 
 log ""
 log "Setup complete."
 log "Next steps:"
-log "  1. Edit pipeline.env — set DATASET to your task JSONL"
-log "  2. Edit SWE-agent/.env — set ANTHROPIC_API_KEY (and GITHUB_TOKEN if needed)"
-log "  3. bash run_pipeline.sh all"
+log "  1. Edit pipeline.env — set DATASET and API keys (GITHUB_TOKEN, ANTHROPIC_API_KEY, OPENAI_API_KEY)"
+log "  2. bash run_pipeline.sh all"

@@ -1,0 +1,6 @@
+# Local config with secrets
+pipeline.env
+
+# Optional: other local artifacts
+.task_analyze/
+.venv/
